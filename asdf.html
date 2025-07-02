@@ -115,12 +115,14 @@
                 for(let i = 0; i < Math.pow(2,codeSize); i++) table[i] = i;
                 table['CLEAR'] = Math.pow(2, codeSize);
                 table['EOI'] = Math.pow(2, codeSize) + 1;
-                //codeSize++;
 
                 //LZW INIT
                 let currentCode = Math.pow(2, codeSize) + 1; //5
                         
                 codeStream.push(table['CLEAR']);
+                bitBuffer |= table['CLEAR'] << bitCount;
+                bitCount += ++codeSize; //특수 코드 처리 
+                        
                 let indexBuffer = [];
                 for(let b of source) {
                     let bufferK = [...indexBuffer];
@@ -130,23 +132,24 @@
                         indexBuffer.push(b);
                     } else {
                         table[bufferK] = ++currentCode;
+                        if(currentCode >= (1 << codeSize)) {
+                            codeSize++;
+                        }
                         
                         let CODE = table[indexBuffer];
                         codeStream.push(CODE);
                                 
                         bitBuffer |= CODE << bitCount;
-                        bitCount += codeSize;
-
+                        console.log(bufferK, bitCount, currentCode);
+                        
                         if(bitCount >= 8) {
                             result.push(bitBuffer & 0xFF);
                             bitBuffer >>= 8;
                             bitCount -= 8;
                         }
-                        
-                        if(currentCode >= (1 << codeSize)) {
-                                    codeSize++;
-                                    bitCount++;
-                        }
+                        bitCount += codeSize;
+                        //bitCount += CODE.toString(2).length;
+
                         
                         indexBuffer = [b];
                     }
