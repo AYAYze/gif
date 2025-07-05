@@ -1,0 +1,264 @@
+<html>
+    <head>
+        
+    </head>
+    <body>
+        <canvas id="canvas"></canvas>
+        <input type="file" id="files" />
+        <button id="start">이미지 추가</button>
+        <button id="create">GIF 생성하기</button>
+
+
+        <!-- 전역 값 선언 -->
+        <script>
+            const imageData = [];
+            const canvas = document.getElementById("canvas");
+            const ctx = canvas.getContext('2d');
+            const files = document.getElementById("files");
+            const start = document.getElementById("start");
+            const create = document.getElementById("create");
+            let width; let height;
+            let globalColorTable = [];
+        </script>
+        
+        <!-- DOM 이벤트 처리 -->
+        <script>
+            files.addEventListener("change", (e)=> {
+                
+                let reader = new FileReader();
+                reader.onload = ()=> {
+                    let img = new Image();
+                
+                    img.onload = ()=> {
+                        canvas.width = img.width;
+                        canvas.height = img.height;
+                        ctx.drawImage(img, 0, 0);
+                    }
+                    img.src = reader.result;
+                }
+                reader.readAsDataURL(e.target.files[0]);
+            });
+            
+            start.addEventListener("click", ()=> {
+                
+                if((width != undefined && width != canvas.width) || !(height == undefined || height == canvas.height)) {
+                    console.log("이미지 크기가 다릅니다!");
+                }else if(width == undefined) {
+                    width = canvas.width;
+                    height = canvas.height;
+
+                    //글로벌 컬러 테이블 업데이트 처리
+                    let colorTable = getColorTable(canvas, ctx);
+                    for(let x of Object.keys(colorTable)) {
+                        globalColorTable[colorTable[x] - 1] = x.split(',').map(Number);
+                    }
+                    globalColorTable = globalColorTable.flat();
+                    //for(let i = 0; i < Math.pow(2, Math.ceil(Math.log2(globalColorTable.length / 3))) * 3; i ++) {
+                for(let i = 0; i < 4; i ++) {
+                        if(globalColorTable[i] == undefined) globalColorTable[i] = 0;
+                    }
+
+                    
+                    imageData.push(...createImageBlock(canvas, ctx, colorTable));
+                }
+
+                
+            });
+            create.addEventListener("click", ()=> {
+                createGIF(width, height, globalColorTable, imageData);
+            });
+        </script>
+
+        <script>
+            function createGIF(width, height, colorTable, images) {
+                const header = [0x47, 0x49, 0x46, 0x38, 0x39, 0x61];
+                console.log(colorTable, "#2");
+                let colorQuantity = Math.ceil(Math.log2(colorTable.length / 3));
+                console.log(colorQuantity, "#3");
+                let packedField = 0b10000000 | colorQuantity << 4 | 0b0000 | colorQuantity;
+                console.log('팩필드', packedField);
+                const screenDesc = [
+                    width & 0xFF, width >> 8,
+                    height & 0xFF, height >> 8,
+                    packedField,
+                    0x05,
+                    0x00
+                ];
+                const applicationExtension = [
+                    0x21, 0xFF, 0x0B,
+                    0x4E, 0x45, 0x54, 0x53, 0x43, 0x41, 0x50, 0x45, 0x32, 0x2E, 0x30,
+                    0x03,
+                    0x01, 0x00, 0x00,
+                    0x00,
+                ]
+                const trailer = [0x3B];
+                const gif = [
+                    ...header,
+                    ...screenDesc,
+                    ...colorTable,
+                    ...applicationExtension,
+                    ...images,
+                    ...trailer
+                ];
+                console.log(gif.map(x=>x.toString(16)));
+                const byteArray = new Uint8Array(gif);
+
+                const blob = new Blob([byteArray], { type: "image/gif"});
+                const url = URL.createObjectURL(blob);
+
+                const img = document.createElement('img');
+                img.src = url;
+
+                document.body.appendChild(img);
+            }
+            
+            function createImageBlock(canvas, ctx, colorTable) {
+                let width = canvas.width;
+                let height = canvas.height;
+                let lzwMinCodeSize = Math.ceil(Math.log2(Object.keys(colorTable).length));
+                lzwMinCodeSize = 2;
+                    console.log(colorTable, lzwMinCodeSize);
+                let source = image2Code(canvas, ctx, colorTable);
+                let compressed = lzw(source, lzwMinCodeSize);
+                let graphicControlExtension = [
+                    0x21, 0xF9, 0x04,
+                    0x04,
+                    0x64, 0x00, 
+                    0x00,
+                    0x00,
+                ];
+                let imageDesc = [
+                    0x2C,
+                    0x00, 0x00,
+                    0x00, 0x00,
+                    width & 0xFF, width >> 8,
+                    height & 0xFF, height >> 8,
+                    0x00,
+                ];
+
+                let subBlocks_compressed = data2subBlock(compressed);
+                let image = [
+                    lzwMinCodeSize,
+                    ...subBlocks_compressed,
+                    0x00,
+                ];
+                console.log(image, "#1");
+                const imageBlock = [
+                    ...graphicControlExtension,
+                    ...imageDesc,
+                    ...image
+                ];
+                
+                return imageBlock; 
+            };
+            
+            function data2subBlock(data) {
+                const blocks = [];
+                let i = 0; 
+                while (i < data.length) {
+                    const size = Math.min(255, data.length - i);
+                    blocks.push(size);
+            
+                    blocks.push(...data.slice(i, i + size));
+                    i += size;
+                }
+                return blocks;
+            }
+            function image2Code(canvas, ctx, colorTable) {
+                
+                let result = [];
+                let data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+                for(let i = 0; i < data.length; i += 4){
+                    let rgb = [data[i], data[i+1], data[i+2]];
+                    let code = colorTable[rgb];
+                    result.push(code);
+                }
+                return result;
+                
+            }
+            function getColorTable(canvas, ctx) {
+                const colorTable = {};
+                let currentId = 0;
+                let data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+                
+                for(let i = 0; i < data.length; i += 4){
+                    let rgb = [data[i], data[i+1], data[i+2]];
+                    if(colorTable[rgb] == undefined) {
+                        colorTable[rgb] = ++currentId;
+                    }
+                }
+
+                return colorTable;
+            }
+
+            function lzw(source, lzwMinCodeSize) {
+                const table = {};                        
+                const result = [];
+                const codeStream = [];
+                let bitBuffer = 0;        
+                let bitCount = 0;
+                
+                //테이블 초기화
+                let codeSize = lzwMinCodeSize;
+                for(let i = 0; i < Math.pow(2,codeSize); i++) table[i] = i;
+                table['CLEAR'] = Math.pow(2, codeSize);
+                table['EOI'] = Math.pow(2, codeSize) + 1;
+
+                //LZW INIT
+                let currentCode = Math.pow(2, codeSize) + 1; //5
+                        
+                codeStream.push(table['CLEAR']);
+                bitBuffer |= table['CLEAR'] << bitCount;
+                bitCount += ++codeSize; //특수 코드 처리 
+                        
+                let indexBuffer = [];
+                for(let k of source) {
+                    let wk = [...indexBuffer, k];
+                    if(table[wk]) {
+                                
+                        indexBuffer.push(k);
+                    } else {
+                        table[wk] = ++currentCode;
+                        
+                        
+                        let CODE = table[indexBuffer];
+                        codeStream.push(CODE);
+                                
+                        bitBuffer |= CODE << bitCount;
+                        
+                        if(bitCount >= 8) {
+                            result.push(bitBuffer & 0xFF);
+                            bitBuffer >>= 8;
+                            bitCount -= 8;
+                        }
+                        bitCount += codeSize;
+                        if(currentCode >= (1 << codeSize)) {
+                            codeSize++;
+                        }
+                        indexBuffer = [k];
+                    }
+                }
+                //처리 되지 못한 indexBuffer 처리
+                if(indexBuffer) {
+                    codeStream.push(table[indexBuffer]);
+                    bitBuffer |= table[indexBuffer] << bitCount;
+                    bitCount += codeSize;
+                }
+                
+                        
+                codeStream.push(table['EOI']);
+                bitBuffer |= table['EOI'] << bitCount;
+                bitCount += codeSize;
+                        
+                while(bitCount >= 8) {
+                            result.push(bitBuffer & 0xFF);
+                            bitBuffer >>= 8;
+                            bitCount -= 8;
+                }
+
+                
+                return result;
+            }
+        </script>
+    </body>
+</html>
